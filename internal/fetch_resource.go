@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func GetLocations(url string) []byte {
+func GetPokemonResource(url string) []byte {
 	cache := &Cache{}
 
 	existingCache, cacheExists := cache.Get(url)
