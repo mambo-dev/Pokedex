@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -16,6 +17,7 @@ type CacheEntry struct {
 }
 
 func (c *Cache) Add(key string, val []byte) {
+	fmt.Printf("=== cache %v added \n", key)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -23,9 +25,11 @@ func (c *Cache) Add(key string, val []byte) {
 		value:     val,
 		createdAt: time.Now(),
 	}
+
 }
 
 func (c *Cache) Get(key string) ([]byte, bool) {
+	fmt.Printf("=== getting %v from cache \n", key)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	cacheEntry, ok := c.cacheEntry[key]
@@ -38,27 +42,29 @@ func (c *Cache) Get(key string) ([]byte, bool) {
 }
 
 func (c *Cache) reapLoop(interval time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 
-	for _, cache := range c.cacheEntry {
+	for range ticker.C {
+		c.mu.Lock()
+		for key, value := range c.cacheEntry {
+			if time.Since(value.createdAt) > interval {
 
-		for range ticker.C {
-			if time.Since(cache.createdAt) > interval {
-				delete(c.cacheEntry, "")
+				delete(c.cacheEntry, key)
 			}
 		}
+		c.mu.Unlock()
 	}
 
 }
 
-func NewCache(val []byte, key string, interval time.Duration) *Cache {
-	cache := &Cache{}
+func NewCache(interval time.Duration) *Cache {
+	fmt.Println("=== new cache created")
+	cache := &Cache{
+		cacheEntry: make(map[string]CacheEntry),
+	}
 
-	cache.reapLoop(interval)
+	go cache.reapLoop(interval)
 	return cache
 
 }
