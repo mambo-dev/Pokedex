@@ -10,17 +10,29 @@ import (
 	locations "mike_pok/internal"
 	"os"
 	"strings"
+	"sync"
 )
 
 type cliCommand struct {
 	name        string
 	description string
-	callback    func(*Config, string) error
+	callback    func(*Config, string, *Pokedex) error
 }
 
 type Config struct {
 	Next     string
 	Previous string
+}
+
+type Pokedex struct {
+	mu      sync.Mutex
+	Pokedex map[string]Pokemon
+}
+
+func NewPokedex() *Pokedex {
+	return &Pokedex{
+		Pokedex: make(map[string]Pokemon),
+	}
 }
 
 func main() {
@@ -61,9 +73,20 @@ func main() {
 			description: "Catching Pokemon adds them to the user's Pokedex.",
 			callback:    commandCatch,
 		},
+		"inspect": {
+			name:        "inspect",
+			description: "Prints the name, height, weight, stats and type(s) of a Pokemon.",
+			callback:    commandInspect,
+		},
+		"pokedex": {
+			name:        "pokedex",
+			description: "Prints a list of all pokemon in your pokedex",
+			callback:    commandPokedex,
+		},
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
+	pokedex := NewPokedex()
 
 	for {
 		fmt.Print("Pokedex > ")
@@ -82,7 +105,7 @@ func main() {
 		if !ok {
 			fmt.Println("Unknown command")
 		} else {
-			if err := value.callback(config, secondaryCommand); err != nil {
+			if err := value.callback(config, secondaryCommand, pokedex); err != nil {
 				fmt.Println(err)
 				if value.name == "help" {
 					fmt.Println("usage:")
@@ -116,12 +139,12 @@ func cleanInput(text string) []string {
 	return words
 }
 
-func commandExit(config *Config, command string) error {
+func commandExit(config *Config, command string, pokedex *Pokedex) error {
 
 	return errors.New("Closing the Pokedex... Goodbye!")
 }
 
-func commandHelp(config *Config, command string) error {
+func commandHelp(config *Config, command string, pokedex *Pokedex) error {
 
 	return errors.New("Welcome to the Pokedex!")
 }
@@ -136,7 +159,7 @@ type Location struct {
 	} `json:"results"`
 }
 
-func commandMap(config *Config, command string) error {
+func commandMap(config *Config, command string, pokedex *Pokedex) error {
 
 	data := locations.GetPokemonResource(config.Next)
 
@@ -158,7 +181,7 @@ func commandMap(config *Config, command string) error {
 	return nil
 }
 
-func commandMapB(config *Config, command string) error {
+func commandMapB(config *Config, command string, pokedex *Pokedex) error {
 	if config.Previous == "" {
 		fmt.Println("you're on the first page")
 		return nil
@@ -193,7 +216,7 @@ type PokemonEncounter struct {
 	} `json:"pokemon_encounters"`
 }
 
-func commandExplore(config *Config, command string) error {
+func commandExplore(config *Config, command string, pokedex *Pokedex) error {
 	locationUrl := fmt.Sprintf("https://pokeapi.co/api/v2/location-area/%v", command)
 	data := locations.GetPokemonResource(locationUrl)
 
@@ -219,18 +242,25 @@ type Pokemon struct {
 	Name           string `json:"name"`
 	Height         int    `json:"height"`
 	Weight         int    `json:"weight"`
-
+	Stats          []struct {
+		BaseStat int `json:"base_stat"`
+		Stat     struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"stat"`
+	} `json:"stats"`
 	Types []struct {
-		name string `json:"name"`
-		url  string `json:"url"`
+		Type struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"type"`
 	} `json:"types"`
 }
 
-func commandCatch(config *Config, command string) error {
+func commandCatch(config *Config, command string, pokedex *Pokedex) error {
 	fmt.Printf("Throwing a Pokeball at %v...", command)
-	url := fmt.Sprintf("https://pokeapi.co/api/v2/pokemon//%v", command)
+	url := fmt.Sprintf("https://pokeapi.co/api/v2/pokemon/%v", command)
 	data := locations.GetPokemonResource(url)
-	pokedex := map[string]Pokemon{}
 
 	pokemon := Pokemon{}
 
@@ -239,16 +269,52 @@ func commandCatch(config *Config, command string) error {
 	if err != nil {
 		return errors.New("could not get pokemon")
 	}
-	fmt.Println(pokemon)
-	number := rand.Intn(pokemon.BaseExperience + 1)
-	fmt.Println(number, pokemon.BaseExperience)
-	if number == pokemon.BaseExperience {
-		pokedex[pokemon.Name] = pokemon
+	number := rand.Intn(pokemon.BaseExperience + 100)
+
+	if number >= pokemon.BaseExperience {
+		pokedex.mu.Lock()
+		defer pokedex.mu.Unlock()
+
+		pokedex.Pokedex[pokemon.Name] = pokemon
+		fmt.Println(pokedex.Pokedex)
 		fmt.Printf("%v was caught!\n", pokemon.Name)
 		return nil
 	}
 
 	fmt.Printf("%v escaped!\n", pokemon.Name)
 
+	return nil
+}
+
+func commandInspect(config *Config, command string, pokedex *Pokedex) error {
+	fmt.Println(pokedex.Pokedex)
+	pokemon, ok := pokedex.Pokedex[command]
+
+	if !ok {
+		fmt.Printf("You have not caught %v", command)
+		return nil
+	}
+
+	fmt.Println("Name:", pokemon.Name)
+	fmt.Println("Height:", pokemon.Height)
+	fmt.Println("Weight:", pokemon.Weight)
+	fmt.Println("Stats:")
+	for _, stat := range pokemon.Stats {
+		fmt.Printf("  -%s: %v\n", stat.Stat.Name, stat.BaseStat)
+	}
+	fmt.Println("Types:")
+	for _, typeInfo := range pokemon.Types {
+		fmt.Println("  -", typeInfo.Type.Name)
+	}
+
+	return nil
+}
+
+func commandPokedex(config *Config, command string, pokedex *Pokedex) error {
+
+	fmt.Println("Your pokedex")
+	for _, value := range pokedex.Pokedex {
+		fmt.Printf("- %v\n", value.Name)
+	}
 	return nil
 }
